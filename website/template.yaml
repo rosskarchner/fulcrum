@@ -1,0 +1,137 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Provides a thin indieauth wrapper over another OAuth2 provider.
+  Every user has a unique set if authorization, finalize, and token URL's
+
+Parameters:
+  DomainName:
+    Type: String
+  BlogName:
+    Type: String
+  BlogDescription:
+    Type: String
+
+Globals:
+  Function:
+    Timeout: 3
+
+Resources:
+  SiteBucket:
+    Type: AWS::S3::Bucket
+
+  ThemeBucket:
+    Type: AWS::S3::Bucket
+
+  PageTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: Data
+          AttributeType: S
+      BillingMode: PAY_PER_REQUEST
+      GlobalSecondaryIndexes:
+        - IndexName: GS1
+          Projection:
+            ProjectionType: KEYS_ONLY
+          KeySchema:
+            - AttributeName: SK
+              KeyType: HASH
+            - AttributeName: Data
+              KeyType: RANGE
+      KeySchema: 
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES 
+
+  ListRenderablesFunction:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      CodeUri: list_renderables_function/
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      Description: ''
+      Environment:
+        Variables:
+          TABLE: !Ref PageTable
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName:
+              !Ref PageTable
+      MemorySize: 128
+      Timeout: 300
+    
+
+  RenderFunction:    
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      CodeUri: render_function/
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      Description: ''
+      Environment:
+        Variables:
+          THEME_BUCKET: !Ref ThemeBucket
+          SITE_BUCKET: !Ref SiteBucket
+          BLOG_NAME: !Ref BlogName
+          BLOG_DESCRIPTION: !Ref BlogDescription
+          DOMAIN_NAME: !Ref DomainName
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref ThemeBucket
+      MemorySize: 128
+      Timeout: 300
+    Metadata:
+      BuildMethod: makefile
+
+  DesignRefreshStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: statemachines/design-refresh.asl.json
+      DefinitionSubstitutions: 
+        ListRenderablesFunction: !GetAtt ListRenderablesFunction.Arn
+        RenderFunction: !GetAtt RenderFunction.Arn
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref ListRenderablesFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref RenderFunction
+
+  BlogConfigFunction:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      CodeUri: blog_config_custom_resource/
+      Handler: blog_config.lambda_handler
+      Runtime: python3.8
+      Description: ''
+      Environment:
+        Variables:
+          THEME_BUCKET: !Ref ThemeBucket
+          DESIGN_REFRESH_STATE_MACHINE: !Ref DesignRefreshStateMachine
+      Policies:
+        - StepFunctionsExecutionPolicy:
+            StateMachineName: !Ref DesignRefreshStateMachine
+        - S3CrudPolicy:
+            BucketName: !Ref ThemeBucket
+      MemorySize: 128
+      Timeout: 300
+
+  BlogConfig:
+    Type: 'Custom::CustomResource'
+    Properties:
+      ServiceToken:
+        'Fn::GetAtt':
+          - BlogConfigFunction
+          - Arn
+      domain: !Ref DomainName
+      title: !Ref BlogName
+      description: !Ref BlogDescription
+    DependsOn:
+      - RenderFunction

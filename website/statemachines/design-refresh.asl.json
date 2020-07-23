@@ -1,0 +1,16 @@
+{
+    "Comment": "Kick of a complete design refresh(usually in response to a template change or site configuration change)",
+    "StartAt": "List Renderables",
+    "States": {
+      "List Renderables": { 
+        "Type": "Task",
+        "Resource": "${ListRenderablesFunction}",
+        "Next": "Render"
+      },
+      "Render": { 
+        "Type": "Task",
+        "Resource": "${RenderFunction}",
+        "End": true
+      }
+  }
+}
