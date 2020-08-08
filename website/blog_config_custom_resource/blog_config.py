@@ -8,32 +8,36 @@ from cfn_custom_resource import lambda_handler, create, update, delete
 s3_client = boto3.client("s3")
 s3 = boto3.resource("s3")
 sf = boto3.client('stepfunctions')
+bucket_name = os.environ['THEME_BUCKET']
+bucket = s3.Bucket(bucket_name)
+
+dynamodb = boto3.resource('dynamodb')
+table =  dynamodb.Table(os.environ['TABLE'])
+stepfunctions = boto3.client('stepfunctions')
 
 def create_or_update(event):
-    bucket_name = os.environ['THEME_BUCKET']
 
-    bucket = s3.Bucket(bucket_name)
-    template_clean= True
-    css_clean = True
+  def upload_file_if_key_does_not_exist(filename, key):
+    try:
+      s3_client.head_object(Bucket=bucket_name, Key= key)
+    except s3_client.exceptions.ClientError:
+      bucket.upload_file(filename, key)
 
-    # This will be a flag that stops the bucket watching function from
-    # from kicking off a design refresh prematurely
-    bucket.upload_file('LOCK','LOCK')
+  upload_file_if_key_does_not_exist('default_template.mustache', 'template.mustache') 
+  upload_file_if_key_does_not_exist('default_styles.css', 'styles.css') 
 
-    def upload_file_if_key_does_not_exist(filename, key):
-      try:
-        s3_client.head_object(Bucket=bucket_name, Key= key)
-      except s3_client.exceptions.ClientError:
-        bucket.upload_file(filename, key)
+  resource_id = 'https://' + event["ResourceProperties"]['domain'] + '/'
 
-    upload_file_if_key_does_not_exist('default_template.mustache', 'template.mustache') 
-    upload_file_if_key_does_not_exist('default_styles.css', 'styles.css') 
+  try:
+    table.put_item(
+      Item={"PK": "feed::::", "SK":"Feed", "data":"/"},
+      ConditionExpression=boto3.dynamodb.conditions.Attr('PK').not_exists()
+    )
+  except dynamodb.meta.client.exceptions.ConditionalCheckFailedException:
+    pass
 
-    resource_id = 'https://' + event["ResourceProperties"]['domain'] + '/'
-
-    s3_client.delete_object(Bucket=bucket_name,Key='LOCK')
-
-    return resource_id, event['ResourceProperties']
+  stepfunctions.start_execution(stateMachineArn=os.environ['DESIGN_REFRESH_STATE_MACHINE'])
+  return resource_id, event['ResourceProperties']
 
 
 @create()
