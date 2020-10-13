@@ -1,5 +1,5 @@
 {
-    "Comment": "Kick of a complete design refresh(usually in response to a template change or site configuration change)",
+    "Comment": "Kick off a complete design refresh(usually in response to a template change or site configuration change)",
     "StartAt": "List Renderables",
     "States": {
       "List Renderables": { 

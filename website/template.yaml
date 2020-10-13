@@ -23,9 +23,6 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       AccessControl: PublicRead
-      WebsiteConfiguration:
-        ErrorDocument: error.html
-        IndexDocument: index.html
 
   Certificate:
     Type: AWS::CertificateManager::Certificate
@@ -76,7 +73,7 @@ Resources:
            AcmCertificateArn: !Ref Certificate
            SslSupportMethod: sni-only
         Origins:
-          - DomainName: !Select [2, !Split ["/", !GetAtt SiteBucket.WebsiteURL]]
+          - DomainName: !GetAtt SiteBucket.DualStackDomainName
             Id: SiteBucketOrigin
             CustomOriginConfig:
               OriginProtocolPolicy: http-only
