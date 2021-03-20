@@ -5,4 +5,4 @@ table =  dynamodb.Table(os.environ['TABLE'])
 
 def lambda_handler(event, context):
   renderable_feeds = table.query(IndexName='GS1')
-  pass
+  return renderable_feeds.get('Items', [])

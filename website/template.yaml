@@ -1,8 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: >
-  Provides a thin indieauth wrapper over another OAuth2 provider.
-  Every user has a unique set if authorization, finalize, and token URL's
+Description: A web site
 
 Parameters:
   HostedZoneId:
@@ -12,6 +10,12 @@ Parameters:
   BlogName:
     Type: String
   BlogDescription:
+    Type: String
+  AuthorName:
+    Type: String
+  AuthorizationEndpoint:
+    Type: String
+  TokenEndpoint:
     Type: String
 
 Globals:
@@ -77,8 +81,6 @@ Resources:
             Id: SiteBucketOrigin
             CustomOriginConfig:
               OriginProtocolPolicy: http-only
-  ThemeBucket:
-    Type: AWS::S3::Bucket
 
   PageTable:
     Type: AWS::DynamoDB::Table
@@ -106,8 +108,20 @@ Resources:
         - AttributeName: SK
           KeyType: RANGE
       StreamSpecification:
-        StreamViewType: NEW_AND_OLD_IMAGES 
+        StreamViewType: NEW_AND_OLD_IMAGES
 
+  ConfigRefreshStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: statemachines/config-refresh.asl.json
+      DefinitionSubstitutions: 
+        ListRenderablesFunction: !GetAtt ListRenderablesFunction.Arn
+        RenderFunction: !GetAtt RenderFunction.Arn
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref ListRenderablesFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref RenderFunction
   ListRenderablesFunction:
     Type: 'AWS::Serverless::Function'
     Properties:
@@ -124,8 +138,6 @@ Resources:
               !Ref PageTable
       MemorySize: 128
       Timeout: 300
-    
-
   RenderFunction:    
     Type: 'AWS::Serverless::Function'
     Properties:
@@ -135,49 +147,27 @@ Resources:
       Description: ''
       Environment:
         Variables:
-          THEME_BUCKET: !Ref ThemeBucket
           SITE_BUCKET: !Ref SiteBucket
           BLOG_NAME: !Ref BlogName
           BLOG_DESCRIPTION: !Ref BlogDescription
           DOMAIN_NAME: !Ref DomainName
-      Policies:
-        - S3ReadPolicy:
-            BucketName: !Ref ThemeBucket
       MemorySize: 128
       Timeout: 300
     Metadata:
       BuildMethod: makefile
 
-  DesignRefreshStateMachine:
-    Type: AWS::Serverless::StateMachine
-    Properties:
-      DefinitionUri: statemachines/design-refresh.asl.json
-      DefinitionSubstitutions: 
-        ListRenderablesFunction: !GetAtt ListRenderablesFunction.Arn
-        RenderFunction: !GetAtt RenderFunction.Arn
-      Policies:
-        - LambdaInvokePolicy:
-            FunctionName: !Ref ListRenderablesFunction
-        - LambdaInvokePolicy:
-            FunctionName: !Ref RenderFunction
-
   BlogConfigFunction:
     Type: 'AWS::Serverless::Function'
     Properties:
-      CodeUri: blog_config_custom_resource/
+      CodeUri: blog_config_refresh_custom_resource/
       Handler: blog_config.lambda_handler
       Runtime: python3.8
       Description: ''
       Environment:
         Variables:
           TABLE: !Ref PageTable
-          THEME_BUCKET: !Ref ThemeBucket
-          DESIGN_REFRESH_STATE_MACHINE: !Ref DesignRefreshStateMachine
+          STATE_MACHINE_ARN: !Ref ConfigRefreshStateMachine
       Policies:
-        - StepFunctionsExecutionPolicy:
-            StateMachineName: !GetAtt DesignRefreshStateMachine.Name
-        - S3CrudPolicy:
-            BucketName: !Ref ThemeBucket
         - DynamoDBCrudPolicy:
             TableName: !Ref PageTable
       MemorySize: 128
@@ -188,10 +178,7 @@ Resources:
     Properties:
       ServiceToken:
         'Fn::GetAtt':
-          - BlogConfigFunction
+          - BlogConfigRefreshFunction
           - Arn
-      domain: !Ref DomainName
-      title: !Ref BlogName
-      description: !Ref BlogDescription
     DependsOn:
       - RenderFunction
