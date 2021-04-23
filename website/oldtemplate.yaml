@@ -23,17 +23,10 @@ Globals:
     Timeout: 3
 
 Resources:
-  SiteEventBus: 
-    Type: AWS::Events::EventBus
-    Properties: 
-        Name: "SiteEventBus"
   SiteBucket:
     Type: AWS::S3::Bucket
-    DeletionPolicy: Retain
     Properties:
       AccessControl: PublicRead
-      WebsiteConfiguration: 
-        IndexDocument: "index.html"
 
   Certificate:
     Type: AWS::CertificateManager::Certificate
@@ -43,30 +36,6 @@ Resources:
       DomainValidationOptions:
         - DomainName: !Ref DomainName
           HostedZoneId: !Ref HostedZoneId
-
-  S3EventsToEventBus:
-    # Is there a better way to get S3 notifications to a
-    # custom event bus?
-    Type: AWS::Serverless::Function
-    Properties:
-      CodeUri: S3EventsToEventBus/
-      Handler: app.lambda_handler
-      Runtime: python3.8
-      Description: ''
-      Environment:
-        Variables:
-          BUS: !Ref SiteEventBus
-      Policies:
-        - EventBridgePutEventsPolicy:
-            EventBusName: !Ref SiteEventBus
-      Events:
-        SiteBucketChange:
-          Type: S3
-          Properties:
-            Bucket: !Ref SiteBucket
-            Events: 
-            - s3:ObjectCreated:*
-            - s3:ObjectRemoved:*
 
   DNSAliasV4:
     Type: AWS::Route53::RecordSet
@@ -94,22 +63,75 @@ Resources:
       DistributionConfig:
         Aliases:
           - !Ref DomainName
-        DefaultRootObject: index.html
+        DefaultRootObject: feeds/default/index.html
         Enabled: true
         HttpVersion: http2
         IPV6Enabled: true
         DefaultCacheBehavior:
-          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
-          TargetOriginId: SiteBucketOrigin
+          AllowedMethods: ['GET', 'HEAD']
+          CachedMethods: ['GET', 'HEAD']
+          Compress: true
+          DefaultTTL: 31536000
+          TargetOriginId: BucketFailoverToRenderAPI
+          ForwardedValues:
+            QueryString: false
           ViewerProtocolPolicy: redirect-to-https
         ViewerCertificate:
            AcmCertificateArn: !Ref Certificate
            SslSupportMethod: sni-only
         Origins:
-          - DomainName: !Sub ${SiteBucket}.s3-website.dualstack.${AWS::Region}.amazonaws.com
+          - DomainName: !GetAtt SiteBucket.DualStackDomainName
             Id: SiteBucketOrigin
             CustomOriginConfig:
               OriginProtocolPolicy: http-only
+          - DomainName: !Sub "${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+            Id: RenderAPI
+            OriginPath: /render
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+        OriginGroups:
+          Quantity: 1
+          Items:
+            - Id: BucketFailoverToRenderAPI
+              FailoverCriteria: 
+                StatusCodes: 
+                  Items:
+                    - 404
+                  Quantity: 1
+              Members:
+                Quantity: 2
+                Items:
+                  - OriginId: SiteBucketOrigin
+                  - OriginId: RenderAPI
+
+
+  PageTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: Data
+          AttributeType: S
+      BillingMode: PAY_PER_REQUEST
+      GlobalSecondaryIndexes:
+        - IndexName: GS1
+          Projection:
+            ProjectionType: KEYS_ONLY
+          KeySchema:
+            - AttributeName: SK
+              KeyType: HASH
+            - AttributeName: Data
+              KeyType: RANGE
+      KeySchema: 
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
 
   RenderFunction:    
     Type: 'AWS::Serverless::Function'
@@ -117,27 +139,24 @@ Resources:
       CodeUri: render_function/
       Handler: app.lambda_handler
       Runtime: python3.8
+      AutoPublishAlias: live
       Description: ''
       Environment:
         Variables:
           SITE_BUCKET: !Ref SiteBucket
+          BLOG_NAME: !Ref BlogName
+          BLOG_DESCRIPTION: !Ref BlogDescription
+          DOMAIN_NAME: !Ref DomainName
+          AUTHORIZATION_ENDPOINT: !Ref AuthorizationEndpoint
+          TOKEN_ENDPOINT: !Ref TokenEndpoint
       MemorySize: 128
       Timeout: 300
-      Policies:
-        S3CrudPolicy:
-          BucketName: !Ref SiteBucket
       Events:
-        ConfigOrTemplateChange:
-          Type: EventBridgeRule
-          Properties:
-            EventBusName: !Ref SiteEventBus
-            Pattern: 
-              detail-type: ["Simplified S3 notification"]
-              detail: 
-                key:
-                 - {"prefix": "_templates"}
-                 - "config.json"
-                bucket: [!Ref SiteBucket]
+          HttpApiEvent:
+            Type: HttpApi
+            Properties:
+              Path: /render/{path+}
+              Method: GET
     Metadata:
       BuildMethod: makefile
 
@@ -150,18 +169,29 @@ Resources:
       Description: ''
       Environment:
         Variables:
+          TABLE: !Ref PageTable
           BUCKET: !Ref SiteBucket
+          CDN: !Ref CDN
       Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref PageTable
         - S3CrudPolicy:
             BucketName: !Ref SiteBucket
+        - Version: '2012-10-17'
+          Statement:
+          - Sid: AllowAllCloudFrontPermissions
+            Effect: Allow
+            Action:
+            - cloudfront:CreateInvalidation
+            Resource: "arn:aws:cloudfront::797438674243:distribution/*"
+
       MemorySize: 128
       Timeout: 300
 
   BlogConfig:
     Type: 'Custom::CustomResource'
-    DependsOn: 
-      - RenderFunction
     Properties:
+      RenderFunctionVersion: !Ref RenderFunction.Version
       DomainName: !Ref DomainName
       BlogName: !Ref BlogName
       BlogDescription: !Ref BlogDescription
@@ -172,3 +202,5 @@ Resources:
         'Fn::GetAtt':
           - BlogConfigFunction
           - Arn
+    DependsOn:
+      - RenderFunction
