@@ -13,7 +13,7 @@ Parameters:
     Type: String
   AuthorName:
     Type: String
-  AuthorizationEndpoint:
+  EmailAddress:
     Type: String
   TokenEndpoint:
     Type: String
@@ -166,9 +166,16 @@ Resources:
       BlogName: !Ref BlogName
       BlogDescription: !Ref BlogDescription
       AuthorName: !Ref AuthorName
-      AuthorizationEndpoint: !Ref AuthorizationEndpoint
+      AuthorizationEndpoint: !GetAtt IndieAuthWithEmail.Outputs.AuthorizationEndpoint
       TokenEndpoint: !Ref TokenEndpoint
       ServiceToken:
         'Fn::GetAtt':
           - BlogConfigFunction
           - Arn
+
+  IndieAuthWithEmail:
+    Type: AWS::Serverless::Application
+    Properties: 
+      Location: indieauth-with-email.yaml
+      Parameters:
+        EmailAddress: !Ref EmailAddress
