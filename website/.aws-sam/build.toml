@@ -15,28 +15,28 @@ source_md5 = ""
 packagetype = "Zip"
 functions = ["BlogConfigFunction"]
 
-[function_build_definitions.391f8ed3-5599-4c70-bd88-e060d9b0c836]
-codeuri = "/home/theross/fulcrum/website/authorization_endpoint_get"
+[function_build_definitions.17b94914-3fe8-42e8-a949-2604c486f130]
+codeuri = "/home/theross/fulcrum/website/indieauth/authorization_endpoint_get"
 runtime = "python3.8"
 source_md5 = ""
 packagetype = "Zip"
 functions = ["IndieAuthWithEmail/AuthorizationEndpointGet"]
 
-[function_build_definitions.1bc04cd6-eb35-4c58-8a23-2a3cfd17d582]
-codeuri = "/home/theross/fulcrum/website/secret_rotation_function"
+[function_build_definitions.937b1e93-7087-4dc1-a1a0-e547ec572276]
+codeuri = "/home/theross/fulcrum/website/indieauth/secret_rotation_function"
 runtime = "python3.8"
 source_md5 = ""
 packagetype = "Zip"
 functions = ["IndieAuthWithEmail/SecretsManagerRotationTemplate/SecretsManagerRotationTemplate"]
 
-[function_build_definitions.b4c1feb7-d47c-4aa9-aeed-555af167a874]
+[function_build_definitions.fa15d7bd-868f-4cfc-aad9-356470a87889]
 codeuri = "/home/theross/fulcrum/website/render_function"
 runtime = "python3.8"
 source_md5 = ""
 packagetype = "Zip"
 functions = ["RenderFunction"]
 
-[function_build_definitions.b4c1feb7-d47c-4aa9-aeed-555af167a874.metadata]
+[function_build_definitions.fa15d7bd-868f-4cfc-aad9-356470a87889.metadata]
 BuildMethod = "makefile"
 
 [layer_build_definitions]

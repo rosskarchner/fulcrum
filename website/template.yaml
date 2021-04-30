@@ -176,6 +176,6 @@ Resources:
   IndieAuthWithEmail:
     Type: AWS::Serverless::Application
     Properties: 
-      Location: indieauth-with-email.yaml
+      Location: indieauth/indieauth-with-email.yaml
       Parameters:
         EmailAddress: !Ref EmailAddress
