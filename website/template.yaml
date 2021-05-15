@@ -7,6 +7,10 @@ Parameters:
     Type: String
   DomainName:
     Type: String
+  CognitoDomain:
+    Type: String
+  IndieauthApiDomain:
+    Type: String
   BlogName:
     Type: String
   BlogDescription:
@@ -15,8 +19,7 @@ Parameters:
     Type: String
   EmailAddress:
     Type: String
-  TokenEndpoint:
-    Type: String
+
 
 Globals:
   Function:
@@ -154,6 +157,15 @@ Resources:
       Policies:
         - S3CrudPolicy:
             BucketName: !Ref SiteBucket
+        - SESCrudPolicy:
+            IdentityName: !Ref EmailAddress
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - "ses:VerifyEmailAddress" # Why doesn't SESCrud include this?
+                - "ses:ListIdentities"
+              Resource: "*"
       MemorySize: 128
       Timeout: 300
 
@@ -166,16 +178,42 @@ Resources:
       BlogName: !Ref BlogName
       BlogDescription: !Ref BlogDescription
       AuthorName: !Ref AuthorName
-      AuthorizationEndpoint: !GetAtt IndieAuthWithEmail.Outputs.AuthorizationEndpoint
-      TokenEndpoint: !Ref TokenEndpoint
+      AuthorizationEndpoint: !Sub "${IndieAuthEndpointsForUser.Outputs.UserAuthorizationEndpoint}"
+      TokenEndpoint: !Sub "${IndieAuthEndpointsForUser.Outputs.UserTokenEndpoint}"
+      EmailAddress: !Ref EmailAddress
+      CognitoDomain: !Ref CognitoDomain
       ServiceToken:
         'Fn::GetAtt':
           - BlogConfigFunction
           - Arn
 
-  IndieAuthWithEmail:
+  UserPoolUser:
+    Type: AWS::Cognito::UserPoolUser
+    Properties:
+      Username: !Ref EmailAddress
+      UserPoolId: !GetAtt IndieAuth.Outputs.UserPool
+      UserAttributes:
+        - Name: email
+          Value: !Ref EmailAddress
+        - Name: website
+          Value: !Sub "https://${DomainName}"
+
+  IndieAuth:
     Type: AWS::Serverless::Application
     Properties: 
-      Location: indieauth/indieauth-with-email.yaml
+      Location: indieauth/template.yaml
       Parameters:
-        EmailAddress: !Ref EmailAddress
+        CognitoDomain: !Ref CognitoDomain
+        HostedZoneId: !Ref HostedZoneId
+        ApiDomain: !Ref IndieauthApiDomain
+
+
+  IndieAuthEndpointsForUser:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: indieauth/endpoint-for-user.yaml
+      Parameters:
+        UserPoolId: !GetAtt IndieAuth.Outputs.UserPool
+        UserPoolArn: !GetAtt IndieAuth.Outputs.UserPoolArn
+        Username: !Ref UserPoolUser
+        ApiDomain: !Ref IndieauthApiDomain

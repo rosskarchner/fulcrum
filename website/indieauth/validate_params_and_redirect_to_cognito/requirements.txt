@@ -1,4 +1,3 @@
 boto3
-chevron==0.14.0
 mf2py
 testresources

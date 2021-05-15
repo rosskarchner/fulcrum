@@ -1,0 +1,51 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: building on indieauth/template.yaml, provide endpoints for a single user
+
+Globals:
+  Function:
+    Timeout: 10
+
+Parameters:
+  UserPoolId:
+    Type: String
+  UserPoolArn:
+    Type: String
+  Username:
+    Type: String
+  ApiDomain:
+    Type: String
+
+Resources: 
+  UserPoolUserExtendedAttributesFunction:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      CodeUri: user_extended_attributes_custom_resource/
+      Handler: user_pool_user.lambda_handler
+      Runtime: python3.8
+      Description: ''
+
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - "cognito-idp:AdminGetUser"
+              Resource: !Ref UserPoolArn
+      MemorySize: 128
+      Timeout: 300
+
+  UserPoolUserExtendedAttributes:
+    Type: 'Custom::CustomResource'
+    Properties:
+      ServiceToken: !GetAtt UserPoolUserExtendedAttributesFunction.Arn
+      UserPoolId: !Ref UserPoolId
+      Username: !Ref Username
+
+Outputs:
+  UserAuthorizationEndpoint:
+    Description: authorization endpoint for this user
+    Value: !Sub "https://${ApiDomain}/${UserPoolUserExtendedAttributes.sub}/authorization"
+  UserTokenEndpoint:
+    Description: authorization endpoint for this user
+    Value: !Sub "https://${ApiDomain}/${UserPoolUserExtendedAttributes.sub}/token"

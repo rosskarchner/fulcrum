@@ -1,12 +1,25 @@
+import base64
 import functools
 import json
 import chevron
-import mf2py
+import hmac
+import time
+import os
 
 from urllib.parse import urlparse as _urlparse
 
+import boto3
+
+secrets = boto3.client("secretsmanager")
+
 urlparse = functools.lru_cache(_urlparse)
-mf2_parse = functolls.lru_cache(mf2py.parse)
+
+# by populating these at the module level, we create the potential
+# for it to fall briefly out of sync after a secret rotation. Because all subsequent
+# requests will use the VersionId, I think this is OK.
+secret_data = secrets.get_secret_value(SecretId=os.environ["HMAC_SECRET_ARN"])
+hmac_key = json.loads(secret_data["SecretString"])["key"]
+hmac_key_version = secret_data["VersionId"]
 
 
 def is_valid_url(url, allow_non_http=False):
@@ -15,53 +28,36 @@ def is_valid_url(url, allow_non_http=False):
     return bool(protocol_ok and parsed_url.netloc)
 
 
-def redirect_uri_valid_for_client(client_id, redirect_uri):
-    parsed_client_id = urlparse(client_id)
-    parsed_redirect_uri = urlparse(redirect_url)
-
-    if parsed_client_id.netloc.lower() == parsed_redirect_uri.netloc.lower():
-        return True
-
-    # if the urls on from the same domain, then we need to check if the client homepage
-    # includes a rel=redirect link to the redirect_uri
-
-    client_data = mf2_parse(url=client_id)
-
-    return (
-        "redirect_uri" in client_data["rels"]
-        and redirect_uri in client_data["rels"]["redirect_uri"]
-    )
-
-def client_name_and_icon(client_id):
-    client_data = mf2_parse(url=client_id)
-
-    for item in client_data['items']:
-        if 'h-app' in item['type'] or 'h-x-app' in item['type']:
-            return item['properties']
-    
-    return client_id, None
-
-
 def lambda_handler(event, context):
-    # print(json.dumps(event))
     params = event["queryStringParameters"]
 
-    # API Gateway will make sure the required parameters are present, but doesn't
-    # validate format. Let's make sure these are valid URL's
-    # redirect_uri can contain other schemes (for mobile apps, etc)
     if all(
         [
             is_valid_url(params["client_id"]),
             is_valid_url(params["redirect_uri"], allow_non_http=True),
-            redirect_uri_valid_for_client(params["client_id"], params["redirect_uri"]),
             ("me" not in params or is_valid_url(params["me"])),
         ]
     ):
-        client_data = mf2_parse(url=client_id)
+        now = time.time()
+        query_string = event["rawQueryString"]
+        upstream_sub_id = event["pathParameters"]["upstream_sub_id"]
+        message = upstream_sub_id + query_string + str(now)
+        hashed = hmac.new(
+            hmac_key.encode("utf-8"), message.encode("utf-8"), "sha256"
+        ).hexdigest()
+        csrf_token = "%s@%s@%s" % (hashed, hmac_key_version, now)
+
+        template_context = {
+            "query_string": base64.b64encode(bytes(query_string, encoding="utf-8")).decode("utf-8"),
+            "upstream_sub_id": upstream_sub_id,
+            "csrf_token": csrf_token,
+            "client_id": params["client_id"],
+            "scope": params.get("scope"),
+        }
 
         with open("get.html") as template:
             return {
                 "statusCode": 200,
                 "headers": {"Content-Type": "text/html"},
-                "body": chevron.render(template=template, data={}),
+                "body": chevron.render(template=template, data=template_context),
             }

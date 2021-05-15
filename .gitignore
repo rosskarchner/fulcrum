@@ -2,7 +2,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
-.aws-am/cache/*
+.aws-sam/
 
 # C extensions
 *.so
@@ -131,3 +131,6 @@ dmypy.json
 # Pyre type checker
 .pyre/
 website/samconfig.toml
+
+# SAM
+.aws-sam/

@@ -1,0 +1,213 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: A simple, single user Indieauth implementation
+
+Globals:
+  Function:
+    Timeout: 10
+
+Parameters:
+  CognitoDomain:
+    Type: String
+  ApiDomain:
+    Type: String
+  HostedZoneId:
+    Type: String
+
+Resources:
+  IndieAuthApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Domain:
+        CertificateArn: !Ref ApiDomainCertificate
+        DomainName: !Ref ApiDomain
+        Route53:
+          HostedZoneId: !Ref HostedZoneId
+
+  HMACSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      GenerateSecretString:
+        SecretStringTemplate: '{}'
+        GenerateStringKey: "key"
+        PasswordLength: 64
+
+  HMACSecretsManagerRotationTemplate:
+    Type: AWS::Serverless::Application
+    Properties: 
+      Location: secret-rotation.yaml
+      Parameters:
+        endpoint: !Sub "https://secretsmanager.${AWS::Region}.amazonaws.com"
+        functionName: !Sub "${AWS::StackName}-RotationFunction"
+
+  HMACSecretRotationSchedule:
+    Type: AWS::SecretsManager::RotationSchedule
+    Properties: 
+      RotationLambdaARN: !GetAtt HMACSecretsManagerRotationTemplate.Outputs.RotationLambdaARN
+      RotationRules: 
+        AutomaticallyAfterDays: 5
+      SecretId: !Ref HMACSecret   
+
+
+  AuthRequestsStorage:
+    # TODO: encrypt
+    Type: AWS::S3::Bucket
+
+  SessionStorage:
+    # TODO: encrypt
+    Type: AWS::S3::Bucket
+
+  AuthorizationEndpointGet:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: authorization_endpoint_get/
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      Environment:
+        Variables:
+          HMAC_SECRET_ARN: !Ref HMACSecret
+      Policies:
+        AWSSecretsManagerGetSecretValuePolicy:
+          SecretArn: !Ref HMACSecret
+      Events:
+        AuthorizationGet:
+          Type: HttpApi
+          Properties:
+            Path: "/{upstream_sub_id}/authorization"
+            Method: GET
+            ApiId: !Ref IndieAuthApi
+  
+  ValidateAuthorizationAndRedirectToCognito:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: validate_params_and_redirect_to_cognito/
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      Environment:
+        Variables:
+          BUCKET: !Ref SessionStorage
+          UPSTREAM_OAUTH_AUTHORIZE: !Sub "https://${CognitoDomain}/oauth2/authorize"
+          USER_POOL_CLIENT: !Ref UserPoolClient
+          HMAC_SECRET_ARN: !Ref HMACSecret
+      Policies:
+        - S3WritePolicy:
+            BucketName: !Ref SessionStorage
+        - AWSSecretsManagerGetSecretValuePolicy:
+            SecretArn: !Ref HMACSecret
+      Events:
+        Validate:
+          Type: HttpApi
+          Properties:
+            Path: /validate
+            Method: POST   
+            ApiId: !Ref IndieAuthApi
+            
+  ConfirmIntentGet:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: confirm_user_intent_get/
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      Environment:
+        Variables:
+          BUCKET: !Ref AuthRequestsStorage
+          UPSTREAM_OAUTH_AUTHORIZE: !Sub "https://${CognitoDomain}/oauth2/authorize"
+          USER_POOL: !Ref UserPool
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref AuthRequestsStorage
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - "cognito-idp:DescribeUserPoolClient"
+              Resource: !GetAtt UserPool.Arn
+      Events:
+        Validate:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref IndieAuthApi
+            Path: /callback
+            Method: GET   
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthScopes:
+        - https://indieauth.spec.indieweb.org/profile
+        - https://indieauth.spec.indieweb.org/email
+        - https://indieauth.spec.indieweb.org/token
+      CallbackURLs:
+        - !Sub "https://${ApiDomain}/callback"
+      DefaultRedirectURI: !Sub "https://${ApiDomain}/callback"
+      GenerateSecret: true
+      SupportedIdentityProviders:
+        - COGNITO
+      UserPoolId: !Ref UserPool
+
+  ApiDomainCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref ApiDomain
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref ApiDomain
+          HostedZoneId: !Ref HostedZoneId
+
+  UserPoolDomainCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref CognitoDomain
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref CognitoDomain
+          HostedZoneId: !Ref HostedZoneId
+
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties: 
+      CustomDomainConfig: 
+        CertificateArn: !Ref UserPoolDomainCertificate
+      Domain: !Ref CognitoDomain
+      UserPoolId: !Ref UserPool
+
+  CogntitoDomainDNS:
+    Type: AWS::Serverless::Application
+    Properties: 
+      Location: cognito_domain_dns.yaml
+      Parameters:
+        AuthDomain: !Ref CognitoDomain
+        HostedZoneId: !Ref HostedZoneId
+
+  UserPoolResourceServer:
+    Type: AWS::Cognito::UserPoolResourceServer
+    Properties:
+      Identifier: https://indieauth.spec.indieweb.org
+      Name: IndieAuth
+      UserPoolId: !Ref UserPool
+      Scopes:
+        - ScopeName: profile
+          ScopeDescription: "Allow another site to confirm that you are the owner of a site"
+        - ScopeName: email
+          ScopeDescription: "Allow another site to get your email address"
+        - ScopeName: token
+          ScopeDescription: "Give an app or another site specific permissions on your site"
+          
+Outputs:
+  UserPool:
+    Description: "UserPool backing this Indieauth API"
+    Value: !Ref UserPool
+  UserPoolArn:
+    Description: "UserPool backing this Indieauth API"
+    Value: !GetAtt UserPool.Arn

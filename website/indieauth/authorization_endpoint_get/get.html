@@ -1,0 +1,27 @@
+<html>
+    <head>
+        <title>Standby</title>
+        <script>
+            document.addEventListener("DOMContentLoaded", (event) => {
+                console.log('DOM is ready.')
+                let form = document.getElementById("form")
+                // form.submit()
+            });
+    </script>
+    </head>
+    <body>
+        
+        Are you trying to log in to {{client_id}} {{#scope}} and allow the site or app to perform some actions on your behalf{{/scope}}?
+        <form method="POST" action="../validate" id="form">
+       
+        <input type="hidden" name="csrf_token" value="{{csrf_token}}"/>
+        <input type="hidden" name="query_string" value="{{query_string}}"/>
+        <input type="hidden" name="upstream_sub_id" value="{{upstream_sub_id}}"/>
+        <br/>
+        <input type="submit" value="Yes! Send me to the login page"/>
+        </form>
+
+        (You'll have another chance to confirm after you enter your name and password)
+        </div>
+    </body>
+</html>
