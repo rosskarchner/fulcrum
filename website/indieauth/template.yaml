@@ -24,38 +24,45 @@ Resources:
         Route53:
           HostedZoneId: !Ref HostedZoneId
 
-  HMACSecret:
-    Type: AWS::SecretsManager::Secret
+  IndieAuthBackendApi:
+    Type: AWS::Serverless::HttpApi
     Properties:
-      GenerateSecretString:
-        SecretStringTemplate: '{}'
-        GenerateStringKey: "key"
-        PasswordLength: 64
+      Auth:
+        Authorizers:
+          UpstreamCognitoAuthorizor:
+            AuthorizationScopes:
+              - https://indieauth.spec.indieweb.org/profile
 
-  HMACSecretsManagerRotationTemplate:
-    Type: AWS::Serverless::Application
-    Properties: 
-      Location: secret-rotation.yaml
-      Parameters:
-        endpoint: !Sub "https://secretsmanager.${AWS::Region}.amazonaws.com"
-        functionName: !Sub "${AWS::StackName}-RotationFunction"
+            IdentitySource: $request.header.Authorization
+            JwtConfiguration:
+              audience:
+                - !Ref UserPoolClient
+              issuer: "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_O2ArXt8eg"
 
-  HMACSecretRotationSchedule:
-    Type: AWS::SecretsManager::RotationSchedule
-    Properties: 
-      RotationLambdaARN: !GetAtt HMACSecretsManagerRotationTemplate.Outputs.RotationLambdaARN
-      RotationRules: 
-        AutomaticallyAfterDays: 5
-      SecretId: !Ref HMACSecret   
-
-
-  AuthRequestsStorage:
+  RequestContinuationBucket:
     # TODO: encrypt
     Type: AWS::S3::Bucket
 
   SessionStorage:
     # TODO: encrypt
     Type: AWS::S3::Bucket
+    Properties:
+      LifecycleConfiguration:
+        Rules:
+          - Id: AgeOut
+            Status: Enabled
+            ExpirationInDays: 1
+
+
+  CodeExchangeStorage:
+    # TODO: encrypt
+    Type: AWS::S3::Bucket
+    Properties:
+      LifecycleConfiguration:
+        Rules:
+          - Id: AgeOut
+            Status: Enabled
+            ExpirationInDays: 1
 
   AuthorizationEndpointGet:
     Type: AWS::Serverless::Function
@@ -65,10 +72,15 @@ Resources:
       Runtime: python3.8
       Environment:
         Variables:
-          HMAC_SECRET_ARN: !Ref HMACSecret
+          SESSION_BUCKET: !Ref SessionStorage
+          CONTINUATION_BUCKET: !Ref RequestContinuationBucket
+          UPSTREAM_OAUTH_AUTHORIZE: !Sub "https://${CognitoDomain}/oauth2/authorize"
+          USER_POOL_CLIENT: !Ref UserPoolClient
       Policies:
-        AWSSecretsManagerGetSecretValuePolicy:
-          SecretArn: !Ref HMACSecret
+        - S3WritePolicy:
+            BucketName: !Ref RequestContinuationBucket
+        - S3ReadPolicy:
+            BucketName: !Ref SessionStorage
       Events:
         AuthorizationGet:
           Type: HttpApi
@@ -76,46 +88,28 @@ Resources:
             Path: "/{upstream_sub_id}/authorization"
             Method: GET
             ApiId: !Ref IndieAuthApi
-  
-  ValidateAuthorizationAndRedirectToCognito:
-    Type: AWS::Serverless::Function
-    Properties:
-      CodeUri: validate_params_and_redirect_to_cognito/
-      Handler: app.lambda_handler
-      Runtime: python3.8
-      Environment:
-        Variables:
-          BUCKET: !Ref SessionStorage
-          UPSTREAM_OAUTH_AUTHORIZE: !Sub "https://${CognitoDomain}/oauth2/authorize"
-          USER_POOL_CLIENT: !Ref UserPoolClient
-          HMAC_SECRET_ARN: !Ref HMACSecret
-      Policies:
-        - S3WritePolicy:
-            BucketName: !Ref SessionStorage
-        - AWSSecretsManagerGetSecretValuePolicy:
-            SecretArn: !Ref HMACSecret
-      Events:
-        Validate:
-          Type: HttpApi
-          Properties:
-            Path: /validate
-            Method: POST   
-            ApiId: !Ref IndieAuthApi
             
-  ConfirmIntentGet:
+  CallbackGetFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: confirm_user_intent_get/
+      CodeUri: callback_get/
       Handler: app.lambda_handler
       Runtime: python3.8
       Environment:
         Variables:
-          BUCKET: !Ref AuthRequestsStorage
-          UPSTREAM_OAUTH_AUTHORIZE: !Sub "https://${CognitoDomain}/oauth2/authorize"
+          SESSION_BUCKET: !Ref SessionStorage
+          CONTINUATION_BUCKET: !Ref RequestContinuationBucket
+          UPSTREAM_OAUTH_TOKEN: !Sub "https://${CognitoDomain}/oauth2/token"
           USER_POOL: !Ref UserPool
+          USER_POOL_CLIENT: !Ref UserPoolClient
+          USER_POOL_CLIENT_CALLBACK: !Sub "https://${ApiDomain}/callback"
+          API_DOMAIN: !Ref ApiDomain
+          BACKEND_API: !Sub "https://${IndieAuthBackendApi}.execute-api.${AWS::Region}.amazonaws.com"
       Policies:
         - S3ReadPolicy:
-            BucketName: !Ref AuthRequestsStorage
+            BucketName: !Ref RequestContinuationBucket
+        - S3WritePolicy:
+            BucketName: !Ref SessionStorage
         - Version: '2012-10-17'
           Statement:
             - Effect: Allow
@@ -129,6 +123,34 @@ Resources:
             ApiId: !Ref IndieAuthApi
             Path: /callback
             Method: GET   
+
+  TokenDetailsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: index.lambda_handler
+      Runtime: python3.8
+      InlineCode: |
+        import json
+        def lambda_handler(event,context):
+          return {
+            'headers': {
+              "Content-Type": "application/json",
+            },
+            'statusCode':200,
+            'body': json.dumps(event['requestContext']['authorizer']['jwt'])
+          }
+      Events:
+        Validate:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref IndieAuthBackendApi
+            Path: /upstream-token-details
+            Method: GET   
+            Auth:
+              AuthorizationScopes:
+                - https://indieauth.spec.indieweb.org/login
+              Authorizer: UpstreamCognitoAuthorizor
+
 
   UserPool:
     Type: AWS::Cognito::UserPool
@@ -145,9 +167,7 @@ Resources:
         - code
       AllowedOAuthFlowsUserPoolClient: true
       AllowedOAuthScopes:
-        - https://indieauth.spec.indieweb.org/profile
-        - https://indieauth.spec.indieweb.org/email
-        - https://indieauth.spec.indieweb.org/token
+        - https://indieauth.spec.indieweb.org/login
       CallbackURLs:
         - !Sub "https://${ApiDomain}/callback"
       DefaultRedirectURI: !Sub "https://${ApiDomain}/callback"
@@ -197,12 +217,8 @@ Resources:
       Name: IndieAuth
       UserPoolId: !Ref UserPool
       Scopes:
-        - ScopeName: profile
+        - ScopeName: login
           ScopeDescription: "Allow another site to confirm that you are the owner of a site"
-        - ScopeName: email
-          ScopeDescription: "Allow another site to get your email address"
-        - ScopeName: token
-          ScopeDescription: "Give an app or another site specific permissions on your site"
           
 Outputs:
   UserPool:

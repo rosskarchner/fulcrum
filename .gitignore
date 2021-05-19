@@ -134,3 +134,4 @@ website/samconfig.toml
 
 # SAM
 .aws-sam/
+.vscode/settings.json

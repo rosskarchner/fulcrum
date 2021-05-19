@@ -1,0 +1,31 @@
+openapi: "3.0.1"
+info:
+  title: "web-test-IndieAuthWithEmail-1ROL2B70HW41V"
+  version: "1.0"
+servers:
+- url: "https://i5yzyqw3ig.execute-api.us-east-1.amazonaws.com/{basePath}"
+  variables:
+    basePath:
+      default: ""
+tags:
+- name: "httpapi:createdBy"
+  x-amazon-apigateway-tag-value: "SAM"
+paths:
+  /authorization:
+    get:
+      parameters: 
+        - in: query
+          name: foo
+          schema:
+            type: integer
+          required: true
+      responses:
+        default:
+          description: "Default response for GET /authorization"
+      x-amazon-apigateway-integration:
+        payloadFormatVersion: "2.0"
+        type: "aws_proxy"
+        httpMethod: "POST"
+        uri: "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:797438674243:function:web-test-IndieAuthWithEma-AuthorizationEndpointGet-ZSB02SJ2WYNO/invocations"
+        connectionType: "INTERNET"
+x-amazon-apigateway-importexport-version: "1.0"
