@@ -53,7 +53,6 @@ Resources:
             Status: Enabled
             ExpirationInDays: 1
 
-
   CodeExchangeStorage:
     # TODO: encrypt
     Type: AWS::S3::Bucket
@@ -64,6 +63,16 @@ Resources:
             Status: Enabled
             ExpirationInDays: 1
 
+  ConfirmAuthenticationOrAuthorizationStorage:
+    # TODO: encrypt
+    Type: AWS::S3::Bucket
+    Properties:
+      LifecycleConfiguration:
+        Rules:
+          - Id: AgeOut
+            Status: Enabled
+            ExpirationInDays: 1
+  
   AuthorizationEndpointGet:
     Type: AWS::Serverless::Function
     Properties:
@@ -88,7 +97,58 @@ Resources:
             Path: "/{upstream_sub_id}/authorization"
             Method: GET
             ApiId: !Ref IndieAuthApi
-            
+
+  CreateConfirmationTicket:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: create_confirmation_ticket/
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      Environment:
+        Variables:
+          SESSION_BUCKET: !Ref SessionStorage
+          CONTINUATION_BUCKET: !Ref RequestContinuationBucket
+      Policies:
+        - S3WritePolicy:
+            BucketName: !Ref ConfirmAuthenticationOrAuthorizationStorage
+        - S3ReadPolicy:
+            BucketName: !Ref SessionStorage
+      Events:
+        AuthorizationGet:
+          Type: HttpApi
+          Properties:
+            Path: "/{upstream_sub_id}/create_confirmation_ticket"
+            Method: POST
+            ApiId: !Ref IndieAuthApi
+
+  ConfirmAuthenticationOrAuthorizationGet:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: confirmation_get/
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      Events:
+        AuthorizationGet:
+          Type: HttpApi
+          Properties:
+            Path: "/{upstream_sub_id}/confirm/{confirmation_ticket}"
+            Method: GET
+            ApiId: !Ref IndieAuthApi
+
+  ConfirmAuthenticationOrAuthorizationPost:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: confirmation_post/
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      Events:
+        AuthorizationGet:
+          Type: HttpApi
+          Properties:
+            Path: "/{upstream_sub_id}/confirm/{confirmation_ticket}"
+            Method: POST
+            ApiId: !Ref IndieAuthApi
+    
   CallbackGetFunction:
     Type: AWS::Serverless::Function
     Properties:

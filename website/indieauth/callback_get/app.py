@@ -48,7 +48,7 @@ def lambda_handler(event, context):
     token_details = token_details_response.json()
     session_data.update(token_details)
 
-    session_data['secret'] = secrets.token_hex()
+    session_data["secret"] = secrets.token_hex()
 
     upstream_sub = token_details["claims"]["sub"]
 
