@@ -1,0 +1,18 @@
+{
+    "configurations": [
+        {
+            "type": "aws-sam",
+            "request": "direct-invoke",
+            "name": "indieauth:AuthorizationEndpointGet",
+            "invokeTarget": {
+                "target": "template",
+                "templatePath": "${workspaceFolder}/website/indieauth/template.yaml",
+                "logicalId": "AuthorizationEndpointGet"
+            },
+            "lambda": {
+                "payload": {},
+                "environmentVariables": {}
+            }
+        }
+    ]
+}

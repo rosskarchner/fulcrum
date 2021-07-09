@@ -13,7 +13,7 @@
         
         Are you trying to log in to {{client_id}} 
         {{#scope}} and allow the site or app to perform some actions on your behalf{{/scope}}?
-        <form method="POST" action="../validate" id="form">
+        <form method="POST" action="confirm" id="form">
        
         <input type="hidden" name="csrf_token" value="{{csrf_token}}"/>
         <input type="hidden" name="response_type" value="{{response_type}}"/>
@@ -31,7 +31,7 @@
         {{/code_challenge_method }}
 
         <br/>
-        <input type="submit" value="Yes! Send me to the login page"/>
+        <input type="submit" value="Yes! Share my identity with {{client_id}}."/>
         </form>
 
         (You'll have another chance to confirm after you enter your name and password)
